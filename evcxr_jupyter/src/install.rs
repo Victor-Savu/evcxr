@@ -31,7 +31,8 @@ const LINT_LICENSE: &[u8] = include_bytes!("../third_party/CodeMirror/LICENSE");
 const VERSION_TXT: &[u8] = include_bytes!("../client/version.txt");
 
 pub(crate) fn install() -> Result<()> {
-    let kernel_dir = get_kernel_dir()?;
+    let name = env::var("EVCXR_KERNEL_NAME").ok();
+    let kernel_dir = get_kernel_dir(&name.as_deref())?;
     fs::create_dir_all(&kernel_dir)?;
     let current_exe_path = env::current_exe()?;
     let current_exe = current_exe_path
@@ -39,9 +40,10 @@ pub(crate) fn install() -> Result<()> {
         .ok_or_else(|| anyhow!("current exe path isn't valid UTF-8"))?;
     let kernel_json = object! {
         "argv" => array![current_exe, "--control_file", "{connection_file}"],
-        "display_name" => "Rust",
+        "display_name" => if let Some(name) = name { format!("Rust ({})", name) } else { "Rust".to_owned() },
         "language" => "rust",
         "interrupt_mode" => "message",
+        "env" => ["EVCXR_TMPDIR", "JUPYTER_PATH", "RUSTUP_TOOLCHAIN", "EVCXR_KERNEL_NAME"].iter().filter_map(|var| env::var(var).ok().map(|val| (var, val))).collect::<std::collections::BTreeMap<_, _>>()
     };
     let kernel_json_filename = kernel_dir.join("kernel.json");
     println!("Writing {}", kernel_json_filename.to_string_lossy());
@@ -61,7 +63,7 @@ pub(crate) fn install() -> Result<()> {
 /// Checks if the current installation is out-of-date, by looking at what's in
 /// version.txt. If it is out of date, then updates it.
 pub(crate) fn update_if_necessary() -> Result<()> {
-    let kernel_dir = get_kernel_dir()?;
+    let kernel_dir = get_kernel_dir(&env::var("EVCXR_KERNEL_NAME").ok().as_deref())?;
     // If the kernel directory doesn't exist, then we're probably being run from
     // a wrapper, so we shouldn't "update", since that would in effect be
     // installing ourselves when we weren't already installed.
@@ -90,7 +92,7 @@ pub(crate) fn install_resource(dir: &Path, filename: &str, bytes: &'static [u8])
 }
 
 pub(crate) fn uninstall() -> Result<()> {
-    let kernel_dir = get_kernel_dir()?;
+    let kernel_dir = get_kernel_dir(&env::var("EVCXR_KERNEL_NAME").ok().as_deref())?;
     println!("Deleting {}", kernel_dir.to_string_lossy());
     fs::remove_dir_all(kernel_dir)?;
     println!("Uninstall complete");
@@ -98,7 +100,7 @@ pub(crate) fn uninstall() -> Result<()> {
 }
 
 // https://jupyter-client.readthedocs.io/en/latest/kernels.html
-fn get_kernel_dir() -> Result<PathBuf> {
+fn get_kernel_dir(name: &Option<&str>) -> Result<PathBuf> {
     let jupyter_dir = if let Ok(dir) = env::var("JUPYTER_PATH") {
         PathBuf::from(dir)
     } else if let Some(dir) = get_user_kernel_dir() {
@@ -106,7 +108,7 @@ fn get_kernel_dir() -> Result<PathBuf> {
     } else {
         bail!("Couldn't get XDG data directory");
     };
-    Ok(jupyter_dir.join("kernels").join("rust"))
+    Ok(jupyter_dir.join("kernels").join(name.unwrap_or("rust")))
 }
 
 #[cfg(not(target_os = "macos"))]
